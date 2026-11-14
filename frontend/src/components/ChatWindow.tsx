@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import type { ChatStatus, Citation } from '../api/types';
 import { mockChatRequest } from '../api/mocks';
+import { useMockApi } from '../api/client';
 import type { useLegalChat } from '../hooks/useLegalChat';
 import { DocumentViewer } from './DocumentViewer';
 import { PsbLogo } from './PsbLogo';
@@ -65,6 +66,10 @@ const STATUS_META: Record<
     Icon: ShieldAlert,
   },
 };
+
+const exampleQuestion = useMockApi
+  ? mockChatRequest.question
+  : 'Какая арендная плата по договору с ООО «Северный Склад» и до какого числа её нужно вносить?';
 
 export function ChatWindow({ chat, mode, onCloseWidget }: ChatWindowProps) {
   const [input, setInput] = useState('');
@@ -204,11 +209,11 @@ export function ChatWindow({ chat, mode, onCloseWidget }: ChatWindowProps) {
                             Источники:
                           </div>
                           {msg.citations.map((cit: Citation) => {
-                            const isSelected = chat.activeCitation?.fragment_id === cit.fragment_id;
+                            const isSelected = chat.activeCitation === cit;
                             return (
                               <button
                                 type="button"
-                                key={cit.fragment_id}
+                                key={`${cit.fragment_id}:${cit.quote}`}
                                 onClick={() => chat.openCitation(cit)}
                                 className={`flex w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-2 text-left text-xs transition active:scale-[0.99] ${
                                   isSelected
@@ -245,11 +250,11 @@ export function ChatWindow({ chat, mode, onCloseWidget }: ChatWindowProps) {
                 <div className="animate-msg-in flex flex-wrap gap-2 pt-1 select-none">
                   <button
                     type="button"
-                    onClick={() => chat.sendMessage(mockChatRequest.question)}
+                    onClick={() => chat.sendMessage(exampleQuestion)}
                     className="inline-flex items-center gap-2 rounded-lg border border-[#E6E6EF] bg-white px-3 py-2 text-left text-xs text-[#3E3E59] transition hover:border-[#E86630] active:scale-[0.98]"
                   >
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ED885E]" />
-                    <span>{mockChatRequest.question}</span>
+                    <span>{exampleQuestion}</span>
                   </button>
                 </div>
               )}

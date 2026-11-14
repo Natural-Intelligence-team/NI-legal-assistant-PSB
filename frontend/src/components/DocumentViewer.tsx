@@ -28,7 +28,7 @@ export function DocumentViewer({
     if (document && hasExactMatch) {
       markRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
-  }, [document, hasExactMatch, citation.fragment_id]);
+  }, [document, hasExactMatch, citation.fragment_id, citation.quote]);
 
   return (
     <aside

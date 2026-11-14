@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { ChatMessage, ChatStatus, Citation, DocumentResponse } from '../api/types';
 import type { MockScenario } from '../api/mocks';
 import { fetchDocumentById, sendChatQuestion } from '../api/client';
@@ -51,11 +51,16 @@ export function useLegalChat() {
   const [activeDocument, setActiveDocument] = useState<DocumentResponse | null>(null);
   const [isDocLoading, setIsDocLoading] = useState(false);
   const [docError, setDocError] = useState<string | null>(null);
+  const answerRequest = useRef<AbortController | null>(null);
+  const documentRequest = useRef<AbortController | null>(null);
 
   const isLoading = isRequestLoading || scenario === 'loading';
 
   const requestAnswer = useCallback(
     async (question: string, currentMessages: UiMessage[]) => {
+      if (answerRequest.current) return;
+      const controller = new AbortController();
+      answerRequest.current = controller;
       setError(null);
       setIsRequestLoading(true);
 
@@ -65,7 +70,8 @@ export function useLegalChat() {
 
       try {
         const mockMode: MockScenario = scenario === 'loading' ? 'answered' : scenario;
-        const res = await sendChatQuestion({ question, history }, mockMode);
+        const res = await sendChatQuestion({ question, history }, mockMode, controller.signal);
+        if (controller.signal.aborted) return;
 
         setMessages((prev) => [
           ...prev,
@@ -79,9 +85,14 @@ export function useLegalChat() {
           },
         ]);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Неизвестная ошибка');
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : 'Неизвестная ошибка');
+        }
       } finally {
-        setIsRequestLoading(false);
+        if (answerRequest.current === controller) {
+          answerRequest.current = null;
+          setIsRequestLoading(false);
+        }
       }
     },
     [scenario]
@@ -90,7 +101,7 @@ export function useLegalChat() {
   const sendMessage = useCallback(
     async (question: string) => {
       const trimmed = question.trim();
-      if (!trimmed || isLoading) return;
+      if (!trimmed || isLoading || answerRequest.current) return;
 
       const userMsg: UiMessage = {
         id: crypto.randomUUID(),
@@ -117,28 +128,41 @@ export function useLegalChat() {
   }, [isLoading, messages, requestAnswer]);
 
   const openCitation = useCallback(async (citation: Citation) => {
+    documentRequest.current?.abort();
+    const controller = new AbortController();
+    documentRequest.current = controller;
     setActiveCitation(citation);
     setActiveDocument(null);
     setDocError(null);
     setIsDocLoading(true);
 
     try {
-      const doc = await fetchDocumentById(citation.source_id);
-      setActiveDocument(doc);
+      const doc = await fetchDocumentById(citation.source_id, controller.signal);
+      if (!controller.signal.aborted) setActiveDocument(doc);
     } catch (err) {
-      setDocError(err instanceof Error ? err.message : 'Документ не найден');
+      if (!controller.signal.aborted) {
+        setDocError(err instanceof Error ? err.message : 'Документ не найден');
+      }
     } finally {
-      setIsDocLoading(false);
+      if (documentRequest.current === controller) {
+        documentRequest.current = null;
+        setIsDocLoading(false);
+      }
     }
   }, []);
 
   const closeDocument = useCallback(() => {
+    documentRequest.current?.abort();
+    documentRequest.current = null;
+    setIsDocLoading(false);
     setActiveCitation(null);
     setActiveDocument(null);
     setDocError(null);
   }, []);
 
   const resetChat = useCallback(() => {
+    answerRequest.current?.abort();
+    answerRequest.current = null;
     setMessages([createWelcomeMessage()]);
     setError(null);
     setIsRequestLoading(false);

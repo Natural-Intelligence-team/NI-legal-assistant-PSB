@@ -5,3 +5,7 @@
 __pycache__
 *.pyc
 .env
+.env.*
+data/
+submission.csv
+submission.csv.tmp

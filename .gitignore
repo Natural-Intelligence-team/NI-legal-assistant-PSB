@@ -47,3 +47,6 @@ sdist/
 .env.prod
 instance/
 .webassets-cache
+data/
+submission.csv
+submission.csv.tmp

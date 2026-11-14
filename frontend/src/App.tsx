@@ -3,6 +3,7 @@ import { useLegalChat, type DevScenario } from './hooks/useLegalChat';
 import { ChatWindow } from './components/ChatWindow';
 import { AssistantWidget } from './components/AssistantWidget';
 import { PortalSkeleton } from './components/PortalSkeleton';
+import { useMockApi } from './api/client';
 
 const SCENARIOS: DevScenario[] = [
   'answered',
@@ -21,18 +22,20 @@ export function App() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[#F8F8FC] text-[#3E3E59]">
       <div className="z-50 flex h-9 shrink-0 select-none items-center justify-end gap-2 border-b border-[#E6E6EF] bg-white px-3 text-xs text-[#5C5C73]">
-        <select
-          aria-label="Сценарий мока"
-          value={chat.scenario}
-          onChange={(e) => chat.setScenario(e.target.value as DevScenario)}
-          className="h-6 rounded-[4px] border border-[#DCDCE8] bg-[#F8F8FC] px-2 font-mono text-[11px] text-[#3E3E59] focus:border-[#E86630] focus:outline-none"
-        >
-          {SCENARIOS.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+        {useMockApi && (
+          <select
+            aria-label="Сценарий мока"
+            value={chat.scenario}
+            onChange={(e) => chat.setScenario(e.target.value as DevScenario)}
+            className="h-6 rounded-[4px] border border-[#DCDCE8] bg-[#F8F8FC] px-2 font-mono text-[11px] text-[#3E3E59] focus:border-[#E86630] focus:outline-none"
+          >
+            {SCENARIOS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        )}
 
         <div className="inline-flex h-6 rounded-[4px] border border-[#DCDCE8] bg-[#F8F8FC] p-0.5 text-[11px]">
           <button
