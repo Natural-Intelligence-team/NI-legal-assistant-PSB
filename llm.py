@@ -1,5 +1,3 @@
-"""Diana's synchronous OpenAI-compatible client. No live requests at startup."""
-
 from time import monotonic, sleep
 from urllib.parse import urlsplit
 

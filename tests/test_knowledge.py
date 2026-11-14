@@ -72,6 +72,18 @@ class KnowledgeTests(unittest.TestCase):
         self.assertEqual(missing.status, "edition_unavailable")
         self.assertEqual(missing.fragments, [])
 
+    def test_only_overlapping_editions_are_kept(self):
+        query = "Когда нужно одобрение генерального директора?"
+        old_only = self.base.search(SearchRequest(query=query, event_date=date(2024, 8, 1),
+                                                   event_date_end=date(2024, 8, 31)))
+        across_change = self.base.search(SearchRequest(query=query, event_date=date(2025, 1, 1),
+                                                        event_date_end=date(2025, 12, 31)))
+        titles = {fragment.title for fragment in old_only.fragments if "Регламент" in fragment.title}
+        self.assertTrue(titles)
+        self.assertTrue(all("ред 2023" in title for title in titles))
+        self.assertTrue(any("ред 2023" in fragment.title for fragment in across_change.fragments))
+        self.assertTrue(any("ред 2025" in fragment.title for fragment in across_change.fragments))
+
     def test_instruction_line_is_not_ranked_but_source_is_preserved(self):
         document = next(document for document in self.base.documents.values() if "архиве" in document.title)
         self.assertIn("ВНИМАНИЕ ДЛЯ ИИ", document.text)

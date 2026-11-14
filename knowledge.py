@@ -264,7 +264,7 @@ class KnowledgeBase:
 
         # Drop a competing corporate edition only if its stated dates exclude this event.
         allowed = {source_id for source_id, info in self._sources.items()
-                   if self._edition_applies(info, request.event_date)}
+                   if self._edition_applies(info, request.event_date, request.event_date_end)}
         highest = self.fragments[ranked[0]]
         highest_meta = self._sources[highest.source_id]
         if highest_meta.group and request.event_date is not None and not any(
@@ -280,7 +280,7 @@ class KnowledgeBase:
         order = {index: rank for rank, index in enumerate(ranked)}
         for source_id in first_sources:
             meta = self._sources[source_id]
-            if meta.group:
+            if meta.group and meta.fragment_positions:
                 # Preserve date wording as evidence even when keywords favor the operative clauses.
                 selected.setdefault(meta.fragment_positions[0])
             for other_id, other in self._sources.items():
@@ -313,9 +313,9 @@ class KnowledgeBase:
         return SearchResult(status="ok", fragments=[self.fragments[index] for index in list(selected)[:MAX_RESULTS]])
 
     @staticmethod
-    def _edition_applies(source: Source, event_date: date | None) -> bool:
+    def _edition_applies(source: Source, event_date: date | None, event_date_end: date | None) -> bool:
         return (event_date is None or not source.group
-                or ((source.starts is None or source.starts <= event_date)
+                or ((source.starts is None or source.starts <= (event_date_end or event_date))
                     and (source.ends is None or event_date < source.ends)))
 
     @staticmethod

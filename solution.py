@@ -1,5 +1,3 @@
-"""Hackathon entry point. Run as `python solution.py` from the output directory."""
-
 from __future__ import annotations
 
 import csv
@@ -69,7 +67,7 @@ def render_answer(response: ChatResponse) -> str:
 
     references = []
     for index, citation in enumerate(response.citations, 1):
-        paragraph = f", п. {citation.section}" if citation.section else ""
+        paragraph = format_section(citation.section)
         quote = " ".join(citation.quote.split())
         if len(quote) > 180:
             shortened = quote[:179].rsplit(" ", 1)[0]
@@ -79,7 +77,7 @@ def render_answer(response: ChatResponse) -> str:
     # Compact quotations first, leaving room for the actual answer and all source titles.
     if len(text) + len(sources) > MAX_ANSWER_CHARS:
         references = [
-            f"[{index}] {citation.title}" + (f", п. {citation.section}" if citation.section else "")
+            f"[{index}] {citation.title}" + format_section(citation.section)
             for index, citation in enumerate(response.citations, 1)
         ]
         sources = "\n\nИсточники:\n" + "\n".join(references)
@@ -89,6 +87,12 @@ def render_answer(response: ChatResponse) -> str:
     if len(text) > available:
         text = text[:max(0, available - 1)].rstrip() + "…"
     return text + sources
+
+
+def format_section(section: str | None) -> str:
+    if not section:
+        return ""
+    return f", {section}" if section.startswith(("ст.", "ч.", "п.")) else f", п. {section}"
 
 
 def write_csv(path: Path, questions: list[tuple[str, ChatRequest]], answers: list[str]) -> None:

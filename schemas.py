@@ -37,6 +37,13 @@ class Fragment(Model):
 class SearchRequest(Model):
     query: str = Field(min_length=1)
     event_date: date | None = None
+    event_date_end: date | None = None
+
+    @model_validator(mode="after")
+    def check_period(self) -> "SearchRequest":
+        if self.event_date_end and (not self.event_date or self.event_date_end < self.event_date):
+            raise ValueError("Invalid event period")
+        return self
 
 
 class SearchResult(Model):

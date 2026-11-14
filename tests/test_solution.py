@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 import httpx
 
-from assistant import InvalidAnswer, _parse_answer, extract_event_date
+from assistant import InvalidAnswer, _parse_answer, extract_event_date, extract_event_period
 from llm import LLMClient, ModelUnavailable
 from schemas import Fragment, SearchResult
 from settings import Settings
@@ -30,6 +30,14 @@ class QuestionTests(unittest.TestCase):
         self.assertEqual(extract_event_date("А в августе 2024?", old), None)
         self.assertEqual(extract_event_date("А сколько дней?", old), date(2025, 3, 20))
 
+    def test_period_preserves_month_and_ignores_identification_and_deadline_dates(self):
+        self.assertEqual(extract_event_period("Договор от 10.01.2023 подписали в августе 2024?", []),
+                         (date(2024, 8, 1), date(2024, 8, 31)))
+        self.assertEqual(extract_event_period("А в 2025 году?", []),
+                         (date(2025, 1, 1), date(2025, 12, 31)))
+        self.assertIsNone(extract_event_period("Как изменилось правило после 01.03.2025?", []))
+        self.assertIsNone(extract_event_period("Каков срок по договору П-12/2024 года?", []))
+
     def test_duplicate_id_rejected(self):
         with TemporaryDirectory() as directory:
             file = Path(directory) / "questions.csv"
@@ -39,6 +47,20 @@ class QuestionTests(unittest.TestCase):
 
 
 class GroundingTests(unittest.TestCase):
+    def test_short_reference_and_formatting_recover_literal_quote(self):
+        body = "Оплата — в течение 30 дней после передачи."
+        fragment = Fragment(source_id="document", fragment_id="permanent-id", title="Договор",
+                            section="4.2", text=body)
+        search = SearchResult(status="ok", fragments=[fragment])
+        value = {"status": "answered", "claims": [{"text": "Срок — 30 дней.", "citations": [
+            {"fragment_id": "S1", "quote": "«Оплата - в течение 30 дней после передачи.»"}]}]}
+        result = _parse_answer("Привожу ответ.\n```json\n" + json.dumps(value) + "\n```", search)
+        self.assertEqual(result.citations[0].fragment_id, "permanent-id")
+        self.assertEqual(result.citations[0].quote, body)
+        value["claims"][0]["citations"][0]["quote"] = "Оплата - в течение 90 дней после передачи."
+        with self.assertRaises(InvalidAnswer):
+            _parse_answer(json.dumps(value), search)
+
     def test_whitespace_is_recovered_as_exact_source_span(self):
         fragment = Fragment(source_id="doc", fragment_id="point", title="Договор", section="1.1",
                             text="Срок оплаты —\r\nтридцать дней с даты передачи.")

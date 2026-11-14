@@ -1,6 +1,7 @@
 """Question answering shared by the web API and solution.py."""
 
 import json
+from calendar import monthrange
 from datetime import date
 import re
 
@@ -20,9 +21,18 @@ SYSTEM_PROMPT = """Ты юридический ассистент по закр�
 регламента учитывай дату события и редакцию. Дата подписания допсоглашения
 может отличаться от даты применения его условия. Старую редакцию закона
 нельзя подменять текущей. Если часть ответа подтверждается, дай эту часть.
+Если event_period охватывает смену редакций, раздели выводы по периодам
+или уточни дату. Если вопрос о новом событии без даты, ориентируйся на
+явно действующую редакцию на дату материалов и укажи её.
 При нехватке оснований укажи, каких данных не хватает. Не помогай нарушать
 закон, но можешь объяснить требования и законные варианты по источникам.
-Ответ короткий, без вступлений. Пиши только JSON такого вида:
+Начинай с прямого ответа на вопрос. Для «можно ли» дай да, нет или условный
+ответ с существенным условием. Для нескольких частей вопроса ответь на каждую
+подтверждаемую часть. Различай рабочие и календарные дни, пороги «свыше» и
+«не менее», дату начала действия и дату события. Не повторяй вопрос и цитату
+целиком в выводе. Цитируй только значимый отрывок, желательно 1–2 предложения.
+Если подходящая редакция и условие есть, отвечай без лишних уточнений.
+Пиши только JSON такого вида:
 {"status":"answered","claims":[{"text":"Краткий подтверждённый вывод",
 "citations":[{"fragment_id":"ID из фрагмента","quote":"дословная цитата"}]}],"missing":[]}
 Статусы: answered (есть ответ), partial (подтверждена часть), clarify (уточнение),
@@ -34,6 +44,13 @@ missing — список кодов из contract, counterparty, event_date, his
 
 MONTHS = {name: number for number, name in enumerate(
     "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split(), 1)}
+MONTH_FORMS = {
+    **MONTHS,
+    **{name: number for number, name in enumerate(
+        "январе феврале марте апреле мае июне июле августе сентябре октябре ноябре декабре".split(), 1)},
+    **{name: number for number, name in enumerate(
+        "январь февраль март апрель май июнь июль август сентябрь октябрь ноябрь декабрь".split(), 1)},
+}
 DATE_RE = re.compile(
     r"(?<![\d/])(?:"
     r"(?P<year_iso>(?:19|20)\d{2})-(?P<month_iso>\d{2})-(?P<day_iso>\d{2})"
@@ -42,7 +59,11 @@ DATE_RE = re.compile(
     + r")\s+(?P<year_words>(?:19|20)\d{2}))(?![\d/])",
     re.IGNORECASE,
 )
-YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+MONTH_RE = re.compile(r"\b(" + "|".join(MONTH_FORMS) + r")\s+((?:19|20)\d{2})\b", re.IGNORECASE)
+YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\s*(?:года\b|году\b|г\b\.?)", re.IGNORECASE)
+# A signature or citation date identifies a document and need not date the event.
+DOCUMENT_DATE = re.compile(r"\b(?:от|редакции\s+от)\s*$", re.IGNORECASE)
+OPEN_INTERVAL = re.compile(r"\b(?:до|после|с|по|между|к)\s*$", re.IGNORECASE)
 
 MISSING_LABELS = {
     "contract": "номер договора", "counterparty": "точное название контрагента",
@@ -62,11 +83,20 @@ class InvalidAnswer(RuntimeError):
     pass
 
 
-def extract_event_date(question: str, previous: list[str]) -> date | None:
-    """Use an explicit full date. Keep ambiguous and month-only dates in the text."""
+def extract_event_period(question: str, previous: list[str]) -> tuple[date, date] | None:
+    """Keep month and year references as intervals, without inventing a day."""
     for text in [question, *reversed(previous)]:
-        dates = set()
+        periods = set()
+        used = []
+        ambiguous = False
         for match in DATE_RE.finditer(text):
+            used.append(match.span())
+            prefix = text[:match.start()]
+            if DOCUMENT_DATE.search(prefix):
+                continue
+            if OPEN_INTERVAL.search(prefix):
+                ambiguous = True
+                continue
             try:
                 if match["year_iso"]:
                     value = date(int(match["year_iso"]), int(match["month_iso"]), int(match["day_iso"]))
@@ -77,23 +107,54 @@ def extract_event_date(question: str, previous: list[str]) -> date | None:
                     value = date(int(match["year"]), int(match["month"]), int(match["day"]))
             except ValueError:
                 return None
-            dates.add(value)
-        if dates:
-            return next(iter(dates)) if len(dates) == 1 else None
-        if YEAR_RE.search(text):
-            # A new year or month-year can supersede an older full date.
-            return None
+            periods.add((value, value))
+        for match in MONTH_RE.finditer(text):
+            if any(start <= match.start() < end for start, end in used):
+                continue
+            used.append(match.span())
+            if DOCUMENT_DATE.search(text[:match.start()]):
+                continue
+            if OPEN_INTERVAL.search(text[:match.start()]):
+                ambiguous = True
+                continue
+            month, year = MONTH_FORMS[match[1].lower()], int(match[2])
+            periods.add((date(year, month, 1), date(year, month, monthrange(year, month)[1])))
+        for match in YEAR_RE.finditer(text):
+            if any(start <= match.start() < end for start, end in used):
+                continue
+            if DOCUMENT_DATE.search(text[:match.start()]) or text[match.start() - 1:match.start()] in {"/", "-"}:
+                continue
+            if OPEN_INTERVAL.search(text[:match.start()]):
+                ambiguous = True
+                continue
+            year = int(match.group()[:4])
+            periods.add((date(year, 1, 1), date(year, 12, 31)))
+        if periods or ambiguous:
+            return next(iter(periods)) if len(periods) == 1 and not ambiguous else None
     return None
+
+
+def extract_event_date(question: str, previous: list[str]) -> date | None:
+    period = extract_event_period(question, previous)
+    return period[0] if period and period[0] == period[1] else None
 
 
 def _exact_quote(value: str, text: str) -> str | None:
     candidate = value.strip()
+    if (candidate[:1], candidate[-1:]) in {('«', '»'), ('“', '”'), ('"', '"')}:
+        candidate = candidate[1:-1].strip()
     if len(candidate) < 12:
         return None
     if candidate in text:
         return candidate
     # Recover the actual source span when the model normalizes line endings/spaces.
-    pattern = r"\s+".join(re.escape(word) for word in candidate.split())
+    # Accept punctuation variants only, then return the original characters.
+    variants = {**{char: "[-–—‑−]" for char in "-–—‑−"},
+                **{char: '[«»“”„"]' for char in '«»“”„"'}}
+    pattern = r"\s+".join(
+        "".join(variants.get(char, re.escape(char)) for char in word)
+        for word in candidate.split()
+    )
     match = re.search(pattern, text)
     return match.group() if match else None
 
@@ -116,9 +177,10 @@ def _answer_from_claims(value: dict, search: SearchResult) -> ChatResponse:
     paragraphs = []
     citations: list[Citation] = []
     fragments = {fragment.fragment_id: fragment for fragment in search.fragments}
-    missing = value.get("missing")
+    fragments.update({f"S{index}": fragment for index, fragment in enumerate(search.fragments, 1)})
+    missing = value.get("missing", [])
     claims = value.get("claims")
-    if (set(value) != {"status", "claims", "missing"}
+    if (not set(value) <= {"status", "claims", "missing"}
             or not isinstance(status, str) or status not in {"answered", *NOTICES}
             or not isinstance(claims, list) or len(claims) > 10
             or not isinstance(missing, list) or len(missing) > 5
@@ -165,10 +227,14 @@ def _answer_from_claims(value: dict, search: SearchResult) -> ChatResponse:
 
 def _parse_answer(raw: str, search: SearchResult) -> ChatResponse:
     text = raw.strip()
-    if text.startswith("```") and text.endswith("```") and "\n" in text:
-        text = text.split("\n", 1)[1][:-3].strip()
     try:
-        value = json.loads(text)
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            blocks = re.findall(r"```(?:json)?[ \t]*\r?\n([\s\S]*?)```", text, re.IGNORECASE)
+            if len(blocks) != 1:
+                raise
+            value = json.loads(blocks[0])
         if not isinstance(value, dict):
             raise InvalidAnswer("Модель не вернула JSON-объект")
         answer = _answer_from_claims(value, search)
@@ -187,9 +253,10 @@ class Assistant:
         history = request.history[-12:]
         previous = [message.content for message in history if message.role == "user"]
         query = "\n".join([" ".join(text.split()) for text in previous + [request.question]])
-        search = self.knowledge.search(SearchRequest(
-            query=query, event_date=extract_event_date(request.question, previous),
-        ))
+        period = extract_event_period(request.question, previous)
+        search_request = SearchRequest(query=query, event_date=period[0] if period else None,
+                                       event_date_end=period[1] if period else None)
+        search = self.knowledge.search(search_request)
         if search.status != "ok":
             status, text = {
                 "date_required": ("clarify", "На какую дату нужно проверить документ?"),
@@ -200,13 +267,19 @@ class Assistant:
 
         raw = self.llm.generate([
             {"role": "system", "content": SYSTEM_PROMPT + (
-                "\nПроверь формат: нужен один JSON-объект. Копируй цитату из текста дословно. "
-                "Если ни один вывод нельзя подтвердить, верни insufficient с missing=[\"evidence\"]."
+                "\nСделай 1–3 коротких вывода и верни один JSON. Для каждого скопируй "
+                "целое значимое предложение из фрагмента и его короткий ID. "
+                "Если оснований действительно нет, верни insufficient с missing=[\"evidence\"]."
                 if repair else "")},
             {"role": "user", "content": json.dumps({
                 "question": request.question,
                 "history": [message.model_dump() for message in history],
-                "fragments": [fragment.model_dump() for fragment in search.fragments],
+                "event_period": [day.isoformat() for day in period] if period else None,
+                "fragments": [
+                    {"fragment_id": f"S{index}", "title": fragment.title,
+                     "section": fragment.section, "text": fragment.text}
+                    for index, fragment in enumerate(search.fragments, 1)
+                ],
             }, ensure_ascii=False)},
         ])
         return _parse_answer(raw, search)
