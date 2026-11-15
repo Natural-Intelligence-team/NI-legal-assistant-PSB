@@ -1,0 +1,2 @@
+# Local CPU inference with a GGUF model
+llama-cpp-python[server]==0.3.37
