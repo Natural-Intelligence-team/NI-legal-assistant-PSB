@@ -144,7 +144,7 @@ def _describe(document: Document, is_law: bool) -> Source:
     # In the supplied corporate predecessor, the only stated start marker is its edition date.
     starts = starts or (_date_match(header, r"редакция от") if group and ends else None)
     law_title = header.splitlines()[0] if is_law else ""
-    identifier_context = "\n".join(header.splitlines()[:3])
+    identifier_context = header
     return Source([], set(_words(title + " " + law_title)),
                   set(_words(party[1])) if party else set(),
                   _contracts(title + "\n" + identifier_context), group, starts, ends)
