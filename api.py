@@ -49,10 +49,7 @@ def create_app(knowledge: KnowledgeBase | None = None, llm: LLMClient | None = N
         if not store.documents:
             raise HTTPException(status_code=503, detail="База документов не загружена")
         try:
-            try:
-                return assistant.answer(request)
-            except InvalidAnswer:
-                return assistant.answer(request, repair=True)
+            return assistant.answer_with_repair(request)
         except (ModelUnavailable, InvalidAnswer) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from None
 

@@ -1,5 +1,3 @@
-"""Environment configuration shared by the web app and platform runner."""
-
 import math
 import os
 from dataclasses import dataclass, field

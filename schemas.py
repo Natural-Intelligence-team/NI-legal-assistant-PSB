@@ -1,5 +1,3 @@
-"""Shared data contracts for retrieval, HTTP and the future platform runner."""
-
 from datetime import date
 from typing import Literal
 

@@ -1,5 +1,3 @@
-"""Question answering shared by the web API and solution.py."""
-
 import json
 from calendar import monthrange
 from datetime import date
@@ -7,7 +5,7 @@ import re
 
 from knowledge import KnowledgeBase
 from llm import LLMClient
-from schemas import ChatRequest, ChatResponse, Citation, SearchRequest, SearchResult
+from schemas import ChatRequest, ChatResponse, Citation, Fragment, SearchRequest, SearchResult
 
 
 SYSTEM_PROMPT = """Ты юридический ассистент по закрытой базе документов.
@@ -61,7 +59,6 @@ DATE_RE = re.compile(
 )
 MONTH_RE = re.compile(r"\b(" + "|".join(MONTH_FORMS) + r")\s+((?:19|20)\d{2})\b", re.IGNORECASE)
 YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\s*(?:года\b|году\b|г\b\.?)", re.IGNORECASE)
-# A signature or citation date identifies a document and need not date the event.
 DOCUMENT_DATE = re.compile(r"\b(?:от|редакции\s+от)\s*$", re.IGNORECASE)
 OPEN_INTERVAL = re.compile(r"\b(?:до|после|с|по|между|к)\s*$", re.IGNORECASE)
 
@@ -80,11 +77,10 @@ NOTICES = {
 
 
 class InvalidAnswer(RuntimeError):
-    pass
+    recovery: ChatResponse | None = None
 
 
 def extract_event_period(question: str, previous: list[str]) -> tuple[date, date] | None:
-    """Keep month and year references as intervals, without inventing a day."""
     for text in [question, *reversed(previous)]:
         periods = set()
         used = []
@@ -139,7 +135,7 @@ def extract_event_date(question: str, previous: list[str]) -> date | None:
     return period[0] if period and period[0] == period[1] else None
 
 
-def _exact_quote(value: str, text: str) -> str | None:
+def _exact_quote(value: str, text: str, *, recover: bool = False) -> str | None:
     candidate = value.strip()
     if (candidate[:1], candidate[-1:]) in {('«', '»'), ('“', '”'), ('"', '"')}:
         candidate = candidate[1:-1].strip()
@@ -147,20 +143,19 @@ def _exact_quote(value: str, text: str) -> str | None:
         return None
     if candidate in text:
         return candidate
-    # Recover the actual source span when the model normalizes line endings/spaces.
-    # Accept punctuation variants only, then return the original characters.
     variants = {**{char: "[-–—‑−]" for char in "-–—‑−"},
                 **{char: '[«»“”„"]' for char in '«»“”„"'}}
+    if recover:
+        variants.update(dict.fromkeys("еёЕЁ", "[её]"))
     pattern = r"\s+".join(
         "".join(variants.get(char, re.escape(char)) for char in word)
         for word in candidate.split()
     )
-    match = re.search(pattern, text)
+    match = re.search(pattern, text, flags=re.IGNORECASE if recover else 0)
     return match.group() if match else None
 
 
 def validate_citations(answer: ChatResponse, search: SearchResult) -> None:
-    """Verify provenance only. Legal entailment remains a separate task."""
     fragments = {fragment.fragment_id: fragment for fragment in search.fragments}
     if answer.status in {"answered", "partial"} and not answer.citations:
         raise InvalidAnswer("В ответе отсутствуют подтверждающие цитаты")
@@ -172,7 +167,31 @@ def validate_citations(answer: ChatResponse, search: SearchResult) -> None:
             raise InvalidAnswer("Не удалось подтвердить цитату ответа")
 
 
-def _answer_from_claims(value: dict, search: SearchResult) -> ChatResponse:
+def _read_claim(claim: object, fragments: dict[str, Fragment], *, recover: bool) -> tuple[str, list[Citation]]:
+    if not isinstance(claim, dict):
+        raise InvalidAnswer("Некорректный формат вывода")
+    conclusion = claim.get("text")
+    evidence = claim.get("citations")
+    if (not isinstance(conclusion, str) or not conclusion.strip() or len(conclusion) > 950
+            or not isinstance(evidence, list) or not 1 <= len(evidence) <= 4):
+        raise InvalidAnswer("Вывод модели не содержит проверяемой цитаты")
+    citations = []
+    for item in evidence:
+        if not isinstance(item, dict) or not isinstance(item.get("fragment_id"), str):
+            raise InvalidAnswer("Не указан ID фрагмента")
+        fragment = fragments.get(item["fragment_id"])
+        raw_quote = item.get("quote")
+        if fragment is None or not isinstance(raw_quote, str) or not 12 <= len(raw_quote.strip()) <= 1200:
+            raise InvalidAnswer("Источник или цитата ответа отсутствуют")
+        quote = _exact_quote(raw_quote, fragment.text, recover=recover)
+        if quote is None:
+            raise InvalidAnswer("Не удалось подтвердить цитату ответа")
+        citations.append(Citation(source_id=fragment.source_id, fragment_id=fragment.fragment_id,
+                                  title=fragment.title, section=fragment.section, quote=quote))
+    return conclusion.strip(), citations
+
+
+def _answer_from_claims(value: dict, search: SearchResult, *, recover: bool = False) -> ChatResponse:
     status = value.get("status")
     paragraphs = []
     citations: list[Citation] = []
@@ -190,32 +209,27 @@ def _answer_from_claims(value: dict, search: SearchResult) -> ChatResponse:
         raise InvalidAnswer("Выводы требуют статуса ответа или частичного ответа")
     if status in {"answered", "partial"} and not claims:
         raise InvalidAnswer("Модель не сформировала проверяемый вывод")
+    discarded = False
     for claim in claims:
-        if not isinstance(claim, dict):
-            raise InvalidAnswer("Некорректный формат вывода")
-        conclusion = claim.get("text")
-        evidence = claim.get("citations")
-        if (not isinstance(conclusion, str) or not conclusion.strip() or len(conclusion) > 950
-                or not isinstance(evidence, list) or not 1 <= len(evidence) <= 4):
-            raise InvalidAnswer("Вывод модели не содержит проверяемой цитаты")
+        try:
+            conclusion, evidence = _read_claim(claim, fragments, recover=recover)
+        except InvalidAnswer:
+            if not recover:
+                raise
+            discarded = True
+            continue
         refs = []
-        for item in evidence:
-            if not isinstance(item, dict) or not isinstance(item.get("fragment_id"), str):
-                raise InvalidAnswer("Не указан ID фрагмента")
-            fragment = fragments.get(item["fragment_id"])
-            raw_quote = item.get("quote")
-            if fragment is None or not isinstance(raw_quote, str) or not 12 <= len(raw_quote.strip()) <= 1200:
-                raise InvalidAnswer("Источник или цитата ответа отсутствуют")
-            quote = _exact_quote(raw_quote, fragment.text)
-            if quote is None:
-                raise InvalidAnswer("Не удалось подтвердить цитату ответа")
-            citation = Citation(source_id=fragment.source_id, fragment_id=fragment.fragment_id,
-                                title=fragment.title, section=fragment.section, quote=quote)
+        for citation in evidence:
             if citation not in citations:
                 citations.append(citation)
             refs.append(str(citations.index(citation) + 1))
-        paragraphs.append(conclusion.strip() + " [" + ", ".join(dict.fromkeys(refs)) + "]")
-    if status in NOTICES:
+        paragraphs.append(conclusion + " [" + ", ".join(dict.fromkeys(refs)) + "]")
+    if discarded:
+        if not paragraphs:
+            raise InvalidAnswer("Модель не сформировала проверяемый вывод")
+        status = "partial"
+        paragraphs.append("Остальные выводы не удалось подтвердить по приведённым источникам.")
+    elif status in NOTICES:
         paragraphs.append(NOTICES[status])
     if missing:
         paragraphs.append("Нужно уточнить или дополнить: " + ", ".join(
@@ -223,6 +237,17 @@ def _answer_from_claims(value: dict, search: SearchResult) -> ChatResponse:
     if not paragraphs:
         raise InvalidAnswer("Модель не сформировала проверяемый ответ")
     return ChatResponse(status=status, answer="\n\n".join(paragraphs), citations=citations)
+
+
+def _recover_answer(value: dict, search: SearchResult) -> ChatResponse | None:
+    if value.get("status") not in ("answered", "partial"):
+        return None
+    try:
+        answer = _answer_from_claims(value, search, recover=True)
+        validate_citations(answer, search)
+    except (InvalidAnswer, ValueError):
+        return None
+    return answer
 
 
 def _parse_answer(raw: str, search: SearchResult) -> ChatResponse:
@@ -237,7 +262,11 @@ def _parse_answer(raw: str, search: SearchResult) -> ChatResponse:
             value = json.loads(blocks[0])
         if not isinstance(value, dict):
             raise InvalidAnswer("Модель не вернула JSON-объект")
-        answer = _answer_from_claims(value, search)
+        try:
+            answer = _answer_from_claims(value, search)
+        except InvalidAnswer as failure:
+            failure.recovery = _recover_answer(value, search)
+            raise
     except ValueError:
         raise InvalidAnswer("Модель вернула ответ в неподдерживаемом формате") from None
     validate_citations(answer, search)
@@ -248,6 +277,22 @@ class Assistant:
     def __init__(self, knowledge: KnowledgeBase, llm: LLMClient):
         self.knowledge = knowledge
         self.llm = llm
+
+    def answer_with_repair(self, request: ChatRequest) -> ChatResponse:
+        try:
+            return self.answer(request)
+        except InvalidAnswer as first:
+            try:
+                return self.answer(request, repair=True)
+            except InvalidAnswer as second:
+                recovery = max(
+                    (answer for answer in (second.recovery, first.recovery) if answer is not None),
+                    key=lambda answer: answer.status == "answered",
+                    default=None,
+                )
+                if recovery is not None:
+                    return recovery
+                raise
 
     def answer(self, request: ChatRequest, *, repair: bool = False) -> ChatResponse:
         history = request.history[-12:]

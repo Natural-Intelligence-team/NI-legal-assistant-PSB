@@ -91,6 +91,21 @@ class KnowledgeTests(unittest.TestCase):
             source = next(iter(base._sources.values()))
             self.assertIn(("п", "33", "2026"), source.contracts)
 
+    def test_late_reference_does_not_override_number_in_title(self):
+        with TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "contracts.zip"
+            with ZipFile(archive_path, "w") as archive:
+                archive.writestr("Договор П-11-2025.txt", (
+                    "ДОГОВОР ПОСТАВКИ\n"
+                    "1. Общие условия\n"
+                    "1.1. Стороны определили условия поставки.\n"
+                    "1.2. Сравнение с договором № П-22/2025."
+                ))
+            base = KnowledgeBase()
+            base.load(archive_path)
+        source = next(iter(base._sources.values()))
+        self.assertEqual(source.contracts, {("п", "11", "2025")})
+
     def test_edition_boundary_and_unavailable_edition(self):
         query = "Когда нужно одобрение генерального директора?"
         for event_date, expected, excluded in [

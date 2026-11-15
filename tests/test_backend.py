@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from zipfile import ZipFile
 
 import httpx
@@ -138,6 +138,23 @@ class ApiTests(unittest.TestCase):
             result = client.post("/api/chat", json=QUESTION.model_dump())
             self.assertEqual(result.status_code, 503)
             self.assertIn("error", result.json())
+
+    def test_chat_recovers_verified_part_after_two_invalid_model_replies(self):
+        first = structured_answer()
+        first["claims"].append({"text": "Вывод без источника.", "citations": [
+            {"fragment_id": "unknown", "quote": "Подтверждение отсутствует в базе."},
+        ]})
+        model = Mock(spec=TestModel)
+        model.generate.side_effect = [json.dumps(first), "Помощник вернул незавершённый JSON"]
+        with self.make_client(TestKnowledge(), model) as client:
+            result = client.post("/api/chat", json=QUESTION.model_dump())
+        self.assertEqual(result.status_code, 200)
+        response = ChatResponse.model_validate(result.json())
+        self.assertEqual(response.status, "partial")
+        self.assertTrue(response.answer.startswith(ANSWER.answer))
+        self.assertNotIn("Вывод без источника", response.answer)
+        self.assertEqual(response.citations, ANSWER.citations)
+        self.assertEqual(model.generate.call_count, 2)
 
     def test_cors_for_direct_local_frontend_connection(self):
         with self.make_client() as client:

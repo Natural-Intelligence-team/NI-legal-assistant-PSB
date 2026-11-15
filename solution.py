@@ -24,8 +24,6 @@ ROLE_RE = re.compile(r"(?m)^[ \t]*(Пользователь|Ассистент|U
 
 def parse_question(text: str) -> ChatRequest:
     roles = list(ROLE_RE.finditer(text))
-    # Split only a recognized transcript. Embedded role markers in a regular question
-    # remain plain data. The platform's short transcripts start with a user turn.
     if (not roles or text[:roles[0].start()].strip()
             or roles[0][1].lower() not in {"пользователь", "user"}):
         return ChatRequest(question=text)
@@ -74,7 +72,6 @@ def render_answer(response: ChatResponse) -> str:
             quote = shortened + "…"
         references.append(f"[{index}] {citation.title}{paragraph} — «{quote}»")
     sources = "\n\nИсточники:\n" + "\n".join(references)
-    # Compact quotations first, leaving room for the actual answer and all source titles.
     if len(text) + len(sources) > MAX_ANSWER_CHARS:
         references = [
             f"[{index}] {citation.title}" + format_section(citation.section)
@@ -106,14 +103,9 @@ def write_csv(path: Path, questions: list[tuple[str, ChatRequest]], answers: lis
 
 def generate_answer(assistant: Assistant, request: ChatRequest) -> str:
     try:
-        return render_answer(assistant.answer(request))
+        return render_answer(assistant.answer_with_repair(request))
     except InvalidAnswer:
-        # The model sometimes emits a malformed object or a quote it has paraphrased.
-        # Try once more with a corrective instruction, then fail closed.
-        try:
-            return render_answer(assistant.answer(request, repair=True))
-        except InvalidAnswer:
-            return RESPONSE_ERROR
+        return RESPONSE_ERROR
 
 
 def run(settings: Settings, output: Path = Path(OUTPUT_NAME)) -> tuple[int, int]:
@@ -162,7 +154,6 @@ def run(settings: Settings, output: Path = Path(OUTPUT_NAME)) -> tuple[int, int]
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
         if authentication_error is not None:
-            # One explicit cause across unprocessed rows, with no model response or credentials in logs.
             answers = [
                 "Техническая ошибка: " + authentication_error + "." if answer == TIMEOUT_ANSWER else answer
                 for answer in answers

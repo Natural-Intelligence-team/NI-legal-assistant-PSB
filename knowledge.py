@@ -1,5 +1,3 @@
-"""In-memory lexical search over the organizer's UTF-8 text archive."""
-
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
@@ -86,7 +84,6 @@ def _bounded(text: str):
 
 
 def _fragment_text(text: str, is_law: bool):
-    """Yield (section, exact source substring) without indexing assistant directives."""
     spans: list[str] = []
     span_lines: list[str] = []
     for line in text.splitlines(keepends=True):
@@ -100,7 +97,6 @@ def _fragment_text(text: str, is_law: bool):
         if is_law:
             article = ARTICLE.search(span)
             section = f"ст. {article[1]}" if article else None
-            # Normative paragraphs and adjacent qualifications share a bounded context.
             yield from ((section, piece) for piece in _bounded(span))
             continue
         sections = list(CLAUSE.finditer(span))
@@ -141,13 +137,12 @@ def _describe(document: Document, is_law: bool) -> Source:
     group = "agreement_rules" if title.startswith("регламент согласования договоров") else ""
     starts = _date_match(header, r"(?:^|[.!?\n]\s*)действует с") if group else None
     ends = _date_match(header, r"редакция утратила силу с") if group else None
-    # In the supplied corporate predecessor, the only stated start marker is its edition date.
     starts = starts or (_date_match(header, r"редакция от") if group and ends else None)
     law_title = header.splitlines()[0] if is_law else ""
-    identifier_context = header
+    identifier_context = "\n".join(header.splitlines()[:3])
+    contracts = _contracts(title + "\n" + identifier_context) or _contracts(header)
     return Source([], set(_words(title + " " + law_title)),
-                  set(_words(party[1])) if party else set(),
-                  _contracts(title + "\n" + identifier_context), group, starts, ends)
+                  set(_words(party[1])) if party else set(), contracts, group, starts, ends)
 
 
 class KnowledgeBase:
@@ -161,7 +156,6 @@ class KnowledgeBase:
         self._average_length = 1.0
 
     def load(self, archive: Path) -> None:
-        """Read documents directly from the ZIP and index exact source fragments."""
         documents: dict[str, Document] = {}
         sources: dict[str, Source] = {}
         fragments: list[Fragment] = []
@@ -214,7 +208,6 @@ class KnowledgeBase:
         self._idf = {word: log1p((len(terms) - n + 0.5) / (n + 0.5)) for word, n in frequencies.items()}
 
     def search(self, request: SearchRequest) -> SearchResult:
-        """Rank explicit clauses; use history to recover the entity, not to choose the topic."""
         lines = [line.strip() for line in request.query.splitlines() if line.strip()]
         if not lines or not self.fragments:
             return SearchResult(status="not_found", fragments=[])
@@ -262,7 +255,6 @@ class KnowledgeBase:
         if not ranked:
             return SearchResult(status="not_found", fragments=[])
 
-        # Drop a competing corporate edition only if its stated dates exclude this event.
         allowed = {source_id for source_id, info in self._sources.items()
                    if self._edition_applies(info, request.event_date, request.event_date_end)}
         highest = self.fragments[ranked[0]]
@@ -281,7 +273,6 @@ class KnowledgeBase:
         for source_id in first_sources:
             meta = self._sources[source_id]
             if meta.group and meta.fragment_positions:
-                # Preserve date wording as evidence even when keywords favor the operative clauses.
                 selected.setdefault(meta.fragment_positions[0])
             for other_id, other in self._sources.items():
                 if other_id == source_id or other_id not in allowed:
@@ -298,7 +289,6 @@ class KnowledgeBase:
                         selected.setdefault(other.fragment_positions[0])
             if len(selected) >= MAX_RESULTS:
                 break
-        # Include adjacent clauses from the strongest hits to cover multi-part questions.
         for index in ranked[:3]:
             fragment = self.fragments[index]
             for neighbor in (index - 1, index + 1):
