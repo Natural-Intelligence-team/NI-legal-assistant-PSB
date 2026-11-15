@@ -1,5 +1,5 @@
 export interface ChatMessage {
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   content: string;
 }
 
@@ -8,7 +8,7 @@ export interface ChatRequest {
   history: ChatMessage[];
 }
 
-export type ChatStatus = "answered" | "partial" | "clarify" | "insufficient" | "refused";
+export type ChatStatus = 'answered' | 'partial' | 'clarify' | 'insufficient' | 'refused';
 
 export interface Citation {
   source_id: string;

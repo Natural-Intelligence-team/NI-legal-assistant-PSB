@@ -1,0 +1,24 @@
+services:
+  backend:
+    build: .
+    environment:
+      DATA_DIR: /data
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      TEMPERATURE: ${TEMPERATURE:-0}
+      MAX_TOKENS: ${MAX_TOKENS:-2200}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-40}
+    volumes:
+      - ./data:/data:ro
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
