@@ -57,6 +57,40 @@ class KnowledgeTests(unittest.TestCase):
         self.assertTrue(any(fragment.section == "3.1" for fragment in result.fragments[:5]))
         self.assertTrue(any("спецификаций после" in fragment.text for fragment in result.fragments))
 
+    def test_contract_reference_beyond_first_three_lines_is_detected(self):
+        with TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "contracts.zip"
+            with ZipFile(archive_path, "w") as archive:
+                archive.writestr("Договор поставки без номера.txt", (
+                    "ДОГОВОР ПОСТАВКИ\n"
+                    "1. Общие положения\n"
+                    "1.1. Стороны заключили договор.\n"
+                    "2. Условия поставки\n"
+                    "2.1. Договор № П-22/2025 предусматривает доставку в Казань."
+                ))
+
+            base = KnowledgeBase()
+            base.load(archive_path)
+
+            source = next(iter(base._sources.values()))
+            self.assertIn(("п", "22", "2025"), source.contracts)
+
+    def test_contract_reference_late_in_document_header_is_detected(self):
+        with TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "contracts.zip"
+            with ZipFile(archive_path, "w") as archive:
+                archive.writestr("Договор без номера.txt", (
+                    "ДОГОВОР ПОСТАВКИ\n"
+                    + "Общие условия поставки. " * 35
+                    + "Договор № П-33/2026 предусматривает поставку товара."
+                ))
+
+            base = KnowledgeBase()
+            base.load(archive_path)
+
+            source = next(iter(base._sources.values()))
+            self.assertIn(("п", "33", "2026"), source.contracts)
+
     def test_edition_boundary_and_unavailable_edition(self):
         query = "Когда нужно одобрение генерального директора?"
         for event_date, expected, excluded in [
