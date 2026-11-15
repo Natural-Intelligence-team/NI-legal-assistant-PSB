@@ -12,11 +12,9 @@ interface AssistantWidgetProps {
 function WidgetView({ chat }: { chat: ChatController }) {
   const [isOpen, setIsOpen] = useState(true);
 
-  return (
-    <div className="fixed right-4 bottom-4 z-40 flex flex-col items-end gap-3 text-left sm:right-5 sm:bottom-5">
-      {isOpen ? (
-        <ChatWindow chat={chat} mode="widget" onCloseWidget={() => setIsOpen(false)} />
-      ) : (
+  if (!isOpen) {
+    return (
+      <div className="fixed right-4 bottom-4 z-40 sm:right-5 sm:bottom-5">
         <button
           type="button"
           onClick={() => setIsOpen(true)}
@@ -25,7 +23,19 @@ function WidgetView({ chat }: { chat: ChatController }) {
           <MessageSquareText className="h-5 w-5 text-[#E86630]" />
           <span>Юридический ассистент</span>
         </button>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        top: 'calc(var(--app-offset-top, 0px) + 2.25rem)',
+        height: 'calc(var(--app-height, 100dvh) - 2.25rem)',
+      }}
+      className="fixed inset-x-0 z-40 flex flex-col sm:inset-auto sm:top-auto sm:right-5 sm:bottom-5 sm:!h-auto sm:items-end"
+    >
+      <ChatWindow chat={chat} mode="widget" onCloseWidget={() => setIsOpen(false)} />
     </div>
   );
 }

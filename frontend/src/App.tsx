@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useLegalChat, type DevScenario } from './hooks/useLegalChat';
+import { useVisualViewport } from './hooks/useVisualViewport';
 import { ChatWindow } from './components/ChatWindow';
 import { AssistantWidget } from './components/AssistantWidget';
 import { PortalSkeleton } from './components/PortalSkeleton';
@@ -18,9 +19,16 @@ const SCENARIOS: DevScenario[] = [
 export function App() {
   const [viewMode, setViewMode] = useState<'full' | 'widget'>('full');
   const chat = useLegalChat();
+  useVisualViewport();
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-[#F8F8FC] text-[#3E3E59]">
+    <div
+      style={{
+        height: 'var(--app-height, 100dvh)',
+        top: 'var(--app-offset-top, 0px)',
+      }}
+      className="fixed inset-x-0 flex flex-col overflow-hidden bg-[#F8F8FC] text-[#3E3E59]"
+    >
       <div className="z-50 flex h-9 shrink-0 select-none items-center justify-end gap-2 border-b border-[#E6E6EF] bg-white px-3 text-xs text-[#5C5C73]">
         {useMockApi && (
           <select

@@ -85,11 +85,28 @@ export function ChatWindow({ chat, mode, onCloseWidget }: ChatWindowProps) {
     bottomRef.current?.scrollIntoView({ behavior });
   }, []);
 
+  const isAtBottomRef = useRef(true);
+
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollDown(distanceFromBottom > 120);
+    isAtBottomRef.current = distanceFromBottom <= 120;
+    setShowScrollDown(!isAtBottomRef.current);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(() => {
+      if (isAtBottomRef.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -128,7 +145,7 @@ export function ChatWindow({ chat, mode, onCloseWidget }: ChatWindowProps) {
     <div
       className={
         isWidget
-          ? 'psb-card-shadow animate-widget-in relative flex h-[min(580px,calc(100dvh-6rem))] w-[min(400px,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-[#8D8DA6]/30 bg-white text-left'
+          ? 'psb-card-shadow animate-widget-in relative flex h-full w-full flex-col overflow-hidden bg-white text-left sm:h-[min(580px,calc(100dvh-6rem))] sm:w-[min(400px,calc(100vw-2rem))] sm:rounded-xl sm:border sm:border-[#8D8DA6]/30'
           : 'psb-card-shadow relative flex h-full w-full flex-col overflow-hidden bg-white text-left md:rounded-xl md:border md:border-[#8D8DA6]/25 lg:flex-row'
       }
     >
