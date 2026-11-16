@@ -27,14 +27,8 @@ function WidgetView({ chat }: { chat: ChatController }) {
     );
   }
 
-  return (
-    <div
-      style={{
-        top: 'calc(var(--app-offset-top, 0px) + 2.25rem)',
-        height: 'calc(var(--app-height, 100dvh) - 2.25rem)',
-      }}
-      className="fixed inset-x-0 z-40 flex flex-col sm:inset-auto sm:top-auto sm:right-5 sm:bottom-5 sm:!h-auto sm:items-end"
-    >
+return (
+    <div className="fixed inset-x-0 top-[calc(var(--app-offset-top,0px)+2.25rem)] z-40 flex h-[calc(var(--app-height,100dvh)-2.25rem)] flex-col sm:inset-auto sm:top-auto sm:right-5 sm:bottom-5 sm:h-auto sm:items-end">
       <ChatWindow chat={chat} mode="widget" onCloseWidget={() => setIsOpen(false)} />
     </div>
   );
